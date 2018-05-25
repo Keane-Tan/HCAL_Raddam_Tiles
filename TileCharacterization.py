@@ -261,6 +261,9 @@ def main():
 	totPE=(bins*counts)/PEgain
 	totPE_fromCut=np.sum(totPE[Cut:])
 	print('Total PE counts from %i bin = %i'%(Cut,totPE_fromCut))
+        PE_fromCut=(bins*counts)/PEgain/(np.sum(counts[Cut:])+1)
+        avgPE_fromCut=np.sum(PE_fromCut[Cut:])
+        print('Avg Photoelectrons per event from %i bin= %4.2f' % (Cut,avgPE_fromCut))
 
 	# Calculate last 1% final counts:
 	Qperc=0.99
@@ -270,6 +273,21 @@ def main():
 	NonzeroIndeces=totPE.nonzero(); Xmax=np.amax(NonzeroIndeces)
 	print('Top %i percentile found after bin %i of non-zero max of: %i'%((1.-Qperc)*100,Qindex,Xmax))
 	print('PE counts of the last %i percentile: %i. [ %i/%i=%5.4f ]' % ( (1.-Qperc)*100, np.sum(totPE[Qindex:]), np.sum(totPE[Qindex:]),np.sum(totPE[0:]),np.sum(totPE[Qindex:])/np.sum(totPE[0:]) ) )
+        #print('Avg Photoelectrons per event from %i bin= %4.2f' % (Qindex,np.sum(PE_fromCut[Qindex:])))
+        print('%i Percentile channel in PE =%4.2f'%((1.-Qperc)*100,Qindex/PEgain))
+
+        # Subtract pedestal from counts:
+        PedSubCounts=counts-yped
+        #print PedSubCounts[0:40]
+        plot_full_spectrum(PedSubCounts,basename+'_pedsub_')
+        totPedSubCounts=(bins*PedSubCounts)/PEgain
+        csPedSubCounts=np.cumsum(totPedSubCounts)  # cumulative sum
+        csPedSubCounts_LastQPercentile=np.where(csPedSubCounts>Qperc*np.sum(totPedSubCounts))
+        Qindex=csPedSubCounts_LastQPercentile[0][0]       # The first index that is bigger than Q percentile
+        NonzeroIndeces=totPedSubCounts.nonzero(); Xmax=np.amax(NonzeroIndeces)
+        print('PedSub: Top %i percentile found after bin %i of non-zero max of: %i'%((1.-Qperc)*100,Qindex,Xmax))
+        print('PedSub: PE counts of the last %i percentile: %i. [ %i/%i=%5.4f ]' % ( (1.-Qperc)*100, np.sum(totPedSubCounts[Qindex:]), np.sum(totPedSubCounts[Qindex:]),np.sum(totPedSubCounts[0:]),np.sum(totPedSubCounts[Qindex:])/np.sum(totPedSubCounts[0:]) ) )
+        print('PedSub: %i Percentile channel in PE =%4.2f'%((1.-Qperc)*100,Qindex/PEgain))
 	
 	## Smoothing really changes the peak location ability
 	#logfile = open('smooth.Spe', 'w')
