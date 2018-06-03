@@ -9,7 +9,7 @@
 # Things we could improve: 
 # 1) Make a big text file with each tile name and the most optimal values for -d -n -m -z in a row.
 #    That way once we have collected all measurements, we can read that text file on the fly and we 
-#    don't have to find and enter the best values every time... 
+#    don't have to find and enter the best values every time... (work in progress)
 # 2) Make two separate command line arguments for the gain calculation: the peak to start from and 
 #    how many peaks to count. Something like -gn 1 and -gm 1, for example, would only calculate the
 #    gain from the peak#2-peak#1. And then the avgPE would still be calculated after -m 8
@@ -32,6 +32,8 @@ NPeaks=8      # The range of PE peaks to count the gain.
 _MinZoomADC=0      # Sometimes this may be higher, depending on the full spectrum
 _MaxZoomADC=900    # This is our estimate of where the first 20 peaks or so will appear in the x-range
 _MinPeakADCDist=20 # Used to find peaks and valleys: minimum distance between peaks
+basename = '' # Input file's name without extension; used for writing the data in OptimalTilePara.txt
+avgPE = 0
 
 def DecodeArguments():
 	global _MinPeakADCDist, _MinZoomADC, _MaxZoomADC, _MinPeakNum, NPeaks
@@ -102,7 +104,7 @@ def optimize_peak_finding(y):
 		xmaxzoom=p[20]+1 # the location of the 20th peak
 	else:
 		xmaxzoom=p[p.size-1]+1 # or as high as we can go
-	print('Optimized parameters: _MinZoomADC=%i _MaxZoomADC=%i _MinPeakADCDist=%i' % (xminzoom, xmaxzoom, mpd))
+	print('Optimized parameters: _MinZoomADC=%i _MaxZoomADC=%i _MinPeakADCDist=%i NPeaks=%i' % (xminzoom, xmaxzoom, mpd,NPeaks))
 	return xminzoom, xmaxzoom, mpd
 
 def calculate_gain(counts,bins,MinGainPNum=8,NGainPeaks=8):
@@ -182,8 +184,39 @@ def plot_cuts(y,p,v,basename,description='',mpd=_MinPeakADCDist,xmin=_MinZoomADC
 	plt.show()
 	plt.clf(); plt.cla()
 
+def calculate_avgPE_and_PE(y,PEgain,bins,label,xindex=0,qpercentile=0.99):
+	# Calculate last 1% final counts:
+	totPE=(bins*y)/PEgain
+	cstotPE=np.cumsum(totPE)  # cumulative sum
+	cstotPE_LastQPercentile=np.where(cstotPE>qpercentile*np.sum(totPE)) # a subarray with the indeces of cstotPE where it is bigger than the last 1% percentile (Qperc=0.99) of totPE
+	Qindex=cstotPE_LastQPercentile[0][0]       # The first index that is bigger than Q percentile
+	NonzeroIndeces=totPE.nonzero(); Xmax=np.amax(NonzeroIndeces)
+	print(label+'Top %i percentile found after bin %i of non-zero max of: %i'%((1.-qpercentile)*100,Qindex,Xmax))
+	print(label+'PE counts of the last %i percentile: %i. [ %i/%i=%5.4f ]' % ( (1.-qpercentile)*100, np.sum(totPE[Qindex:]), np.sum(totPE[Qindex:]),np.sum(totPE[0:]),np.sum(totPE[Qindex:])/np.sum(totPE[0:]) ) )
+        #print('Avg Photoelectrons per event from %i bin= %4.2f' % (Qindex,np.sum(PE_fromCut[Qindex:])))
+        print(label+'%i Percentile channel in PE =%4.2f'%((1.-qpercentile)*100,Qindex/PEgain))
+
+def saveTileParam(): # this function saves the optimal tile parameters
+	f = open('OptimalTilePara.txt','r+')
+	f1 = f.readlines()
+
+	if any(basename in s for s in f1):
+    		print('Optimal tile parameters already existed in the file.')
+	else:
+	    f1.append(basename+'\t%i\t%i\t%i\t%i\t%4.2f\n' % (_MinPeakADCDist,_MaxZoomADC,_MinPeakNum,NPeaks,avgPE))
+	    firstRow = f1[0] 
+	    f1.remove(firstRow) # get rid of the column titles of the table
+	    f1.sort() 		# sort the entries in the file
+	    f1.insert(0,firstRow) # put the column titles of the table back
+	    print("Optimal tile parameters are saved.")
+	    f.seek(0) 		# this together with .truncate() allows us to overwrite the text file
+	    f.writelines(f1)
+	    f.truncate()
+
+	f.close()
+
 def main():
-	global _MinPeakADCDist, _MinZoomADC, _MaxZoomADC, _MinPeakNum, NPeaks
+	global _MinPeakADCDist, _MinZoomADC, _MaxZoomADC, _MinPeakNum, NPeaks, basename, avgPE
 	args=DecodeArguments()
 	inputfilename=args.f[0] # inputfilename="C:/User/test 13 may 8.Spe"
 	# Read txt file, skipping the first 12 rows (header) and the last 15 rows (footer)
@@ -264,31 +297,18 @@ def main():
         PE_fromCut=(bins*counts)/PEgain/(np.sum(counts[Cut:])+1)
         avgPE_fromCut=np.sum(PE_fromCut[Cut:])
         print('Avg Photoelectrons per event from %i bin= %4.2f' % (Cut,avgPE_fromCut))
+	print('The location of the first yped peak is: %i' % (np.argmax(yped)))
+	print('The location of the first counts peak is: %i' %  (np.argmax(counts)))
 
 	# Calculate last 1% final counts:
-	Qperc=0.99
-	cstotPE=np.cumsum(totPE)  # cumulative sum
-	cstotPE_LastQPercentile=np.where(cstotPE>Qperc*np.sum(totPE)) # a subarray with the indeces of cstotPE where it is bigger than the last 1% percentile (Qperc=0.99) of totPE
-	Qindex=cstotPE_LastQPercentile[0][0]       # The first index that is bigger than Q percentile
-	NonzeroIndeces=totPE.nonzero(); Xmax=np.amax(NonzeroIndeces)
-	print('Top %i percentile found after bin %i of non-zero max of: %i'%((1.-Qperc)*100,Qindex,Xmax))
-	print('PE counts of the last %i percentile: %i. [ %i/%i=%5.4f ]' % ( (1.-Qperc)*100, np.sum(totPE[Qindex:]), np.sum(totPE[Qindex:]),np.sum(totPE[0:]),np.sum(totPE[Qindex:])/np.sum(totPE[0:]) ) )
-        #print('Avg Photoelectrons per event from %i bin= %4.2f' % (Qindex,np.sum(PE_fromCut[Qindex:])))
-        print('%i Percentile channel in PE =%4.2f'%((1.-Qperc)*100,Qindex/PEgain))
+	calculate_avgPE_and_PE(counts,PEgain,bins, '')
 
         # Subtract pedestal from counts:
         PedSubCounts=counts-yped
         #print PedSubCounts[0:40]
-        plot_full_spectrum(PedSubCounts,basename+'_pedsub_')
-        totPedSubCounts=(bins*PedSubCounts)/PEgain
-        csPedSubCounts=np.cumsum(totPedSubCounts)  # cumulative sum
-        csPedSubCounts_LastQPercentile=np.where(csPedSubCounts>Qperc*np.sum(totPedSubCounts))
-        Qindex=csPedSubCounts_LastQPercentile[0][0]       # The first index that is bigger than Q percentile
-        NonzeroIndeces=totPedSubCounts.nonzero(); Xmax=np.amax(NonzeroIndeces)
-        print('PedSub: Top %i percentile found after bin %i of non-zero max of: %i'%((1.-Qperc)*100,Qindex,Xmax))
-        print('PedSub: PE counts of the last %i percentile: %i. [ %i/%i=%5.4f ]' % ( (1.-Qperc)*100, np.sum(totPedSubCounts[Qindex:]), np.sum(totPedSubCounts[Qindex:]),np.sum(totPedSubCounts[0:]),np.sum(totPedSubCounts[Qindex:])/np.sum(totPedSubCounts[0:]) ) )
-        print('PedSub: %i Percentile channel in PE =%4.2f'%((1.-Qperc)*100,Qindex/PEgain))
-	
+	plot_full_spectrum(PedSubCounts,basename+'_pedsub_')
+	calculate_avgPE_and_PE(PedSubCounts,PEgain,bins, 'PedSub')
+	print('The location of the first pedSub trough is: %i' %  (np.argmin(PedSubCounts)))        
 	## Smoothing really changes the peak location ability
 	#logfile = open('smooth.Spe', 'w')
 	#sy=smooth_spectrum(counts)
@@ -296,4 +316,6 @@ def main():
 		#logfile.write('%i %i \n'%(sy[i],counts[i]))
 	#logfile.close()
 	#plot_full_spectrum(sy[:_MaxZoomADC],'caca')
+	
+	saveTileParam()
 main()
