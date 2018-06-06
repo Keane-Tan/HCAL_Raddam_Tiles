@@ -9,7 +9,7 @@
 # Things we could improve: 
 # 1) Make a big text file with each tile name and the most optimal values for -d -n -m -z in a row.
 #    That way once we have collected all measurements, we can read that text file on the fly and we 
-#    don't have to find and enter the best values every time... (work in progress)
+#    don't have to find and enter the best values every time... (work in progress: need to make the program read the best values)
 # 2) Make two separate command line arguments for the gain calculation: the peak to start from and 
 #    how many peaks to count. Something like -gn 1 and -gm 1, for example, would only calculate the
 #    gain from the peak#2-peak#1. And then the avgPE would still be calculated after -m 8
