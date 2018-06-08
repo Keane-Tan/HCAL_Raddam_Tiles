@@ -9,7 +9,7 @@
 # Things we could improve: 
 # 1) Make a big text file with each tile name and the most optimal values for -d -n -m -z in a row.
 #    That way once we have collected all measurements, we can read that text file on the fly and we 
-#    don't have to find and enter the best values every time... (work in progress: need to make the program read the best values)
+#    don't have to find and enter the best values every time... (completed)
 # 2) Make two separate command line arguments for the gain calculation: the peak to start from and 
 #    how many peaks to count. Something like -gn 1 and -gm 1, for example, would only calculate the
 #    gain from the peak#2-peak#1. And then the avgPE would still be calculated after -m 8
@@ -25,6 +25,7 @@ import sys, os, argparse, linecache
 import numpy as np
 import matplotlib.pyplot as plt
 from detect_peaks import detect_peaks, smooth_spectrum
+from io import BytesIO
 
 _MinPeakNum=8 # The number of PE peaks to cut (and the first peak to begin counting the gain)
 NPeaks=8      # The range of PE peaks to count the gain. 
@@ -34,6 +35,10 @@ _MaxZoomADC=900    # This is our estimate of where the first 20 peaks or so will
 _MinPeakADCDist=20 # Used to find peaks and valleys: minimum distance between peaks
 basename = '' # Input file's name without extension; used for writing the data in OptimalTilePara.txt
 avgPE = 0
+fileExist = 0
+
+OTP = open('OptimalTilePara.txt','r+')	# reading the text file that contains the optimal tile parameters
+f1 = OTP.readlines()			
 
 def DecodeArguments():
 	global _MinPeakADCDist, _MinZoomADC, _MaxZoomADC, _MinPeakNum, NPeaks
@@ -196,27 +201,27 @@ def calculate_avgPE_and_PE(y,PEgain,bins,label,xindex=0,qpercentile=0.99):
         #print('Avg Photoelectrons per event from %i bin= %4.2f' % (Qindex,np.sum(PE_fromCut[Qindex:])))
         print(label+'%i Percentile channel in PE =%4.2f'%((1.-qpercentile)*100,Qindex/PEgain))
 
+def useTileParam(pos): # uses the optimal tile parameters saved in the text file
+	global _MinPeakADCDist,_MaxZoomADC,_MinPeakNum,NPeaks
+	values=np.genfromtxt(BytesIO(f1[pos]), dtype=int, delimiter="\t")
+	_MinPeakADCDist,_MaxZoomADC,_MinPeakNum,NPeaks = (values[1],values[2],values[3],values[4])
+
 def saveTileParam(): # this function saves the optimal tile parameters
-	f = open('OptimalTilePara.txt','r+')
-	f1 = f.readlines()
-
-	if any(basename in s for s in f1):
-    		print('Optimal tile parameters already existed in the file.')
-	else:
-	    f1.append(basename+'\t%i\t%i\t%i\t%i\t%4.2f\n' % (_MinPeakADCDist,_MaxZoomADC,_MinPeakNum,NPeaks,avgPE))
-	    firstRow = f1[0] 
-	    f1.remove(firstRow) # get rid of the column titles of the table
-	    f1.sort() 		# sort the entries in the file
-	    f1.insert(0,firstRow) # put the column titles of the table back
-	    print("Optimal tile parameters are saved.")
-	    f.seek(0) 		# this together with .truncate() allows us to overwrite the text file
-	    f.writelines(f1)
-	    f.truncate()
-
-	f.close()
+#	if fileExist != 1:
+		f1.append(basename+'\t%i\t%i\t%i\t%i\t%4.2f\n' % (_MinPeakADCDist,_MaxZoomADC,_MinPeakNum,NPeaks,avgPE))
+		firstRow = f1[0] 
+		f1.remove(firstRow) # get rid of the column titles of the table
+		f1.sort() 		# sort the entries in the file
+		f1.insert(0,firstRow) # put the column titles of the table back
+		print("Optimal tile parameters are saved.")
+		OTP.seek(0) 	# this together with .truncate() allows us to overwrite the text file
+		OTP.writelines(f1)
+		OTP.truncate()
+		OTP.close()
+		
 
 def main():
-	global _MinPeakADCDist, _MinZoomADC, _MaxZoomADC, _MinPeakNum, NPeaks, basename, avgPE
+	global _MinPeakADCDist, _MinZoomADC, _MaxZoomADC, _MinPeakNum, NPeaks, basename, avgPE, fileExist
 	args=DecodeArguments()
 	inputfilename=args.f[0] # inputfilename="C:/User/test 13 may 8.Spe"
 	# Read txt file, skipping the first 12 rows (header) and the last 15 rows (footer)
@@ -241,10 +246,21 @@ def main():
 	dirname, fname = os.path.split(inputfilename) # extract path (directories) and filename
 	basename, ext = os.path.splitext(fname) # extract extension from filename
 	
-	# Try to optimize the main parameters:
-	if args.o:
-		_MinZoomADC, _MaxZoomADC, _MinPeakADCDist = optimize_peak_finding(counts)
+	if any(basename in s for s in f1):
+		fileExist = 1
+		for i, elem in enumerate(f1):
+			if basename in elem:
+				pos = i  # tells us where the tile parameters of the input file are in OptimalTilePara.txt
+		recalSave = raw_input("Tile parameters already exist. Do you want to recalculate and resave them? y/n ")
+		if recalSave == "n":
+			useTileParam(pos)
+		elif args.o:
+			_MinZoomADC, _MaxZoomADC, _MinPeakADCDist = optimize_peak_finding(counts)
 	
+	# Try to optimize the main parameters:	
+	elif args.o:
+		_MinZoomADC, _MaxZoomADC, _MinPeakADCDist = optimize_peak_finding(counts)
+
 	plot_full_spectrum(counts,basename,yped)
 	#print data['counts'][10]
 	#print(data['row'], data['x'],data['xerr']) 
@@ -307,7 +323,7 @@ def main():
         PedSubCounts=counts-yped
         #print PedSubCounts[0:40]
 	plot_full_spectrum(PedSubCounts,basename+'_pedsub_')
-	calculate_avgPE_and_PE(PedSubCounts,PEgain,bins, 'PedSub')
+	calculate_avgPE_and_PE(PedSubCounts,PEgain,bins, 'PedSub: ')
 	print('The location of the first pedSub trough is: %i' %  (np.argmin(PedSubCounts)))        
 	## Smoothing really changes the peak location ability
 	#logfile = open('smooth.Spe', 'w')
@@ -316,6 +332,9 @@ def main():
 		#logfile.write('%i %i \n'%(sy[i],counts[i]))
 	#logfile.close()
 	#plot_full_spectrum(sy[:_MaxZoomADC],'caca')
-	
-	saveTileParam()
+	if fileExist != 1:
+		saveTileParam()
+	elif recalSave == "y":
+		f1.pop(pos)  # gets rid of the existed tile parameters
+		saveTileParam()
 main()
