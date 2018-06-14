@@ -37,8 +37,8 @@ basename = '' # Input file's name without extension; used for writing the data i
 avgPE = 0
 fileExist = 0
 
-OTP = open('OptimalTilePara.txt','r+')	# reading the text file that contains the optimal tile parameters
-f1 = OTP.readlines()			
+OTP = open('NewOptimalTilePara.txt','r+')	# reading the text file that contains the optimal tile parameters
+f1 = OTP.readlines()
 
 def DecodeArguments():
 	global _MinPeakADCDist, _MinZoomADC, _MaxZoomADC, _MinPeakNum, NPeaks
@@ -55,6 +55,7 @@ To plot the pedestal run: python TileCharacterization.py May_22_Sample_84_1.Spe 
 	parser.add_argument('-n', nargs=1, help='Number of peaks to calculate the range from')
 	parser.add_argument('-s', action='store_true', help='Do smoothing of the spectrum', default=False)
 	parser.add_argument('-o', action='store_true', help='Optimize parameters automatically. Try to start from low mpd (-d 20). It will not find correct values if mpd is larger than gain.', default=False)
+	parser.add_argument('-c', action='store_true', help='Plot comparison/overlay of several spectra', default=False)
 	
 	if len(sys.argv)==1:
 	    parser.print_help()
@@ -151,6 +152,40 @@ def plot_full_spectrum(y,basename, yped=np.array([0])):
 	#plt.show()
 	plt.savefig("figs/"+basename+"_full.png")
 	plt.clf(); plt.cla()
+	
+def plot_overlay(filenames):
+	from cycler import cycler
+	default_cycler = cycler('color', ['r', 'g', 'b', 'k','m','gray','brown','y']) \
+                    + cycler('linestyle', ['-', '--', ':', '-.','-', '--', ':', '-.'])
+	plt.rc('lines', linewidth=4)
+	plt.rc('axes', prop_cycle=default_cycler)
+	d=len(filenames)
+	if d==1:
+		return
+	else:
+		xmax=500
+		xmin=0
+		for f in filenames:
+			data_from_file=np.genfromtxt(f,delimiter=" ",names=['counts'],skip_header=12,skip_footer=15)['counts']
+			NonzeroIndeces=data_from_file.nonzero(); xmin=np.amin(NonzeroIndeces); dataxmax=np.amax(NonzeroIndeces)
+			width=xmax-xmin; ymax=np.amax(data_from_file)
+			if dataxmax>xmax:
+				xmax=dataxmax
+			print(f,len(data_from_file),data_from_file)
+			#y=np.append(y,np.array([data_from_file]), axis=0) # creates array of dimension d, each element being an array of 8191 numbers.
+			plt.plot(data_from_file, lw=1, label=f) # Draws the spectrum
+			
+		plt.axis([xmin-0.02*width, xmax, 1, ymax+0.5*(ymax-1.)])
+		plt.yscale('log')
+		plt.xlabel('Charge: ADC channel #', fontsize=14)
+		plt.ylabel('Counts', fontsize=14)
+		plt.legend(loc='best', framealpha=.5)
+		plt.savefig("figs/comparison.png")
+		print('Saved comparison plot in figs/comparison.png')
+		plt.clf(); plt.cla()
+	#print(y)
+	#print(y[1][30])
+	return
 
 def plot_cuts(y,p,v,basename,description='',mpd=_MinPeakADCDist,xmin=_MinZoomADC,xmax=_MaxZoomADC,ymin=1,ymax=2.e6,cut=1,avgpe=0.,pegain=0.):
 	''' Adapted from _plot() in detect_peaks module 
@@ -174,7 +209,7 @@ def plot_cuts(y,p,v,basename,description='',mpd=_MinPeakADCDist,xmin=_MinZoomADC
         plt.ylabel('Counts', fontsize=14)
         plt.title(description)
         plt.yscale('log')  # plt.grid()
-	plt.axis([xmin, xmax, ymin, ymax])
+        plt.axis([xmin, xmax, ymin, ymax])
         x=np.arange(xmin,xmax)
         plt.fill_between(x[cut:],y[x[cut:]],facecolor='b',alpha=0.3)
 	plt.text(x[cut],ymin+5,' Avg = %4.2f pe/MIP' % avgpe,fontsize=18,color='b')
@@ -185,7 +220,9 @@ def plot_cuts(y,p,v,basename,description='',mpd=_MinPeakADCDist,xmin=_MinZoomADC
 	plt.plot([xright,xright], [ylo,yhi], 'k--', lw=1)
 	plt.annotate('', xy=[xleft,yhi], xytext=[xright,yhi], arrowprops={'arrowstyle': '<->'}, ha='center')
 	plt.annotate('Gain=%4.2f'%pegain, xy=[xleft,yhi], xytext=[xcenter,yhi], ha='center',va='top')
-	plt.savefig("figs/"+basename+"_cuts.png")
+	cuts_plot_name="figs/"+basename+"_cuts.png"
+	plt.savefig(cuts_plot_name)
+	print('Saved cuts plot in: %s' % cuts_plot_name)
 	plt.show()
 	plt.clf(); plt.cla()
 
@@ -233,11 +270,14 @@ def main():
 	descriptionline=linecache.getline(inputfilename, 2).strip() # just read one line in textfile
 	# Try to find pedestal spectrum in the second argument of the files
 	yped=np.array([0])
-	if len(args.f)>1:
+	if len(args.f)>1 and args.c==False:
 		pedfile=args.f[1]
 		ped_data = np.genfromtxt(pedfile,delimiter=" ",names=['counts'],skip_header=12,skip_footer=15)
 		yped=ped_data['counts']
 		print(' Will use pedestal file %s with %i rows of data' % (pedfile,len(yped)))
+	if args.c:
+		plot_overlay(args.f)
+		sys.exit()
 	bins=np.arange(1,len(counts)+1) # start at 1 and go to 8192
 	cb=counts*bins
 	print(" Read %i rows of data counts from file %s" % (len(counts),inputfilename))
@@ -310,9 +350,9 @@ def main():
 	totPE=(bins*counts)/PEgain
 	totPE_fromCut=np.sum(totPE[Cut:])
 	print('Total PE counts from %i bin = %i'%(Cut,totPE_fromCut))
-        PE_fromCut=(bins*counts)/PEgain/(np.sum(counts[Cut:])+1)
-        avgPE_fromCut=np.sum(PE_fromCut[Cut:])
-        print('Avg Photoelectrons per event from %i bin= %4.2f' % (Cut,avgPE_fromCut))
+	PE_fromCut=(bins*counts)/PEgain/(np.sum(counts[Cut:])+1)
+	avgPE_fromCut=np.sum(PE_fromCut[Cut:])
+	print('Avg Photoelectrons per event from %i bin= %4.2f' % (Cut,avgPE_fromCut))
 	print('The location of the first yped peak is: %i' % (np.argmax(yped)))
 	print('The location of the first counts peak is: %i' %  (np.argmax(counts)))
 
