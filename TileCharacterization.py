@@ -255,7 +255,8 @@ def saveTileParam(): # this function saves the optimal tile parameters
 		OTP.writelines(f1)
 		OTP.truncate()
 		OTP.close()
-		
+
+def bestFit():		
 
 def main():
 	global _MinPeakADCDist, _MinZoomADC, _MaxZoomADC, _MinPeakNum, NPeaks, basename, avgPE, fileExist
