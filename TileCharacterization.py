@@ -26,6 +26,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from detect_peaks import detect_peaks, smooth_spectrum
 from io import BytesIO
+from scipy.optimize import curve_fit
 
 _MinPeakNum=8 # The number of PE peaks to cut (and the first peak to begin counting the gain)
 NPeaks=8      # The range of PE peaks to count the gain. 
@@ -256,7 +257,23 @@ def saveTileParam(): # this function saves the optimal tile parameters
 		OTP.truncate()
 		OTP.close()
 
-def bestFit():		
+def bestFit(counts):
+	x = np.arange(counts.size)
+	xp = x[np.nonzero(counts)]
+	yp = counts[np.nonzero(counts)]
+		
+	def func(x,mu,s,a,b):  # function used to fit the data
+		return (a/np.sqrt(2*np.pi*s**2))*np.exp(-((x-mu)**2)/(2*s**2)) + b  # a Gaussian function that has an amplitude, a and 
+										    # an offset in the x direction, b. 
+	popt, pcov = curve_fit(func, xp[:400], np.log(yp[:400]), bounds = ([0,5,500,0],[100,250,5000,9])) # popt contains the optimum fit parameters
+	plt.plot(xp[:400], func(xp[:400], *popt), 'r', label="Gaussian Fit")
+	plt.plot(xp[:400], np.log(yp[:400]),'b',label="Data")
+	plt.legend(loc='best', framealpha=.5, numpoints=1,title=basename+'.Spe')
+	plt.xlabel('Charge: ADC channel #', fontsize=14)
+        plt.ylabel('Log(Counts)', fontsize=14)
+	plt.title("Gaussian Fit to " + basename)
+	plt.show()
+	print("The Gaussian best fit values are: mu = %4.2f, sigma = %4.2f, a = %4.2f, and b = %4.2f." % (popt[0],popt[1],popt[2],popt[3]))	
 
 def main():
 	global _MinPeakADCDist, _MinZoomADC, _MaxZoomADC, _MinPeakNum, NPeaks, basename, avgPE, fileExist
@@ -373,6 +390,7 @@ def main():
 		#logfile.write('%i %i \n'%(sy[i],counts[i]))
 	#logfile.close()
 	#plot_full_spectrum(sy[:_MaxZoomADC],'caca')
+	bestFit(counts)
 	if fileExist != 1:
 		saveTileParam()
 	elif recalSave == "y":
