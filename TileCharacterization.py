@@ -27,7 +27,7 @@ import matplotlib.pyplot as plt
 from detect_peaks import detect_peaks, smooth_spectrum
 from io import BytesIO
 
-OTP = open('OptimalTilePara.txt','r+')	# reading the text file (OptimalTilePara.txt) that contains the optimal tile parameters
+OTP = open('NewOptimalTilePara.txt','r+')	# reading the text file (OptimalTilePara.txt) that contains the optimal tile parameters
 f1 = OTP.readlines()	
 
 class TileParameters(object):
@@ -169,8 +169,8 @@ To plot the pedestal run: python TileCharacterization.py May_22_Sample_84_1.Spe 
 		values=np.genfromtxt(BytesIO(f1[pos]), dtype=int, delimiter="\t")
 		self._MinPeakADCDist,self._MaxZoomADC,self._MinPeakNum,self.NPeaks = (values[1],values[2],values[3],values[4])
 
-	def saveTileParam(self): # this function saves the optimal tile parameters
-		f1.append(self.basename+'\t%i\t%i\t%i\t%i\t%4.2f\n' % (self._MinPeakADCDist,self._MaxZoomADC,self._MinPeakNum,self.NPeaks,self.avgPE))
+	def saveTileParam(self,PEgain,Temp,avgPE_cut3,avgPE_after_align): # this function saves the optimal tile parameters
+		f1.append(self.basename+'\t%i\t%i\t%i\t%i\t%4.2f\t%s\t%4.2f\t%5.3f\t%5.3f\n' % (self._MinPeakADCDist,self._MaxZoomADC,self._MinPeakNum,self.NPeaks,PEgain, Temp,self.avgPE,avgPE_cut3,avgPE_after_align))
 		firstRow = f1[0] 
 		f1.remove(firstRow) # get rid of the column titles of the table
 		f1.sort() 		# sort the entries in the file
@@ -184,7 +184,6 @@ To plot the pedestal run: python TileCharacterization.py May_22_Sample_84_1.Spe 
 	def plot_full_spectrum(self,y, basename, yped=np.array([0])):
 		''' Find max and min ranges and plot the complete spectrum. 
 		Will need to zoom in for interesting regions later. If you pass the pedestal counts, it will overlay that spectrum. It will find all the peaks in this range too.'''
-		global _MinPeakADCDist
 		plt.plot(y, 'b', lw=1, label=basename+'.Spe') # Draws the spectrum
 		plt.yscale('log')
 		NonzeroIndeces=y.nonzero(); xmin=np.amin(NonzeroIndeces); xmax=np.amax(NonzeroIndeces)
@@ -208,6 +207,93 @@ To plot the pedestal run: python TileCharacterization.py May_22_Sample_84_1.Spe 
 		#plt.show()
 		plt.savefig("figs/"+basename+"_full.png")
 		plt.clf(); plt.cla()
+
+	def avgPE_after_AlignPedSub(self, bins, peaks, PEgain, counts, yped, _MinPeakNum):
+	
+		# in case, the peak finding algorithm can't find all the peaks, we can estimate all the 
+		# peak positions using the gain
+		peaks = np.append(peaks,np.arange(peaks[-1]+PEgain,np.amax(bins),PEgain))
+		peaks = peaks.astype(int)
+
+		# align the peaks with the respective peak numbers; changing the x-axis to peak number
+		bins = bins.astype(float)	
+
+		for i in range(len(peaks)-1):
+			bins[peaks[i]:peaks[i+1]+1] = np.linspace(i,i+1,len(bins[peaks[i]:peaks[i+1]+1]))
+
+	    	for i in range(peaks[0]+1):
+			bins[peaks[0]-i] = bins[peaks[0]] - i*(bins[peaks[0]+1]-bins[peaks[0]])
+	
+		# sometimes counts and yped do not have the same length. That's why we have to do the following.
+		lastind = np.minimum(counts.size,yped.size)
+		newPedSub = counts[:lastind] - yped[:lastind]	
+
+		Cut=peaks[_MinPeakNum]+int((peaks[_MinPeakNum+1]-peaks[_MinPeakNum])/2)
+	    	PE=(bins[:lastind]*newPedSub)/(np.sum(newPedSub[Cut:])+1)
+	    	avgPE=np.sum(PE[Cut:])	
+
+		# Overlaying the data, pedestal, and the subtracted data together. Check to make sure the peaks are
+		# correctly positioned according to their peak numbers.
+		ran = np.arange(peaks[18]+20)
+		ran2 = np.arange(Cut,peaks[18]+20)
+	
+		plt.plot(bins[ran],counts[ran],'y')
+		plt.plot(bins[ran],yped[ran],'r')
+		plt.plot(bins[ran2],newPedSub[ran2],'g')
+		plt.yscale('log')
+		plt.ylabel('Count')
+		plt.xlabel('Peak Number')
+		plt.legend([self.basename, "Pedestal", "After Pedestal Subtraction"])
+		plt.xticks(np.arange(0,19,step=2))
+		for i in range(19):
+		    plt.axvline(x=i,linestyle=':')
+		plt.show()
+
+		return avgPE
+
+	def peakDis(self,peaks,gain,bins,counts,yped):
+		# "finding" all the peaks
+		peaks = np.append(peaks,np.arange(peaks[-1]+gain,np.amax(bins),gain))
+		peaks = peaks.astype(int)
+		
+		# discretizing the spectrum based on peak number and summing up all the counts
+		# for each peak number
+		def peakSum(counts):
+			peakSum = []
+	
+			for i in range(len(peaks)):
+				if i == 0:               # dealing with peak 0
+					totc = np.sum(counts[0:np.mean([peaks[i],peaks[i+1]],dtype=int)])
+				elif i == len(peaks)-1:   # dealing with last peak
+					totc = np.sum(counts[np.mean([peaks[i],peaks[i-1]],dtype=int):])
+				else:
+					totc = np.sum(counts[np.mean([peaks[i-1],peaks[i]],dtype=int):np.mean([peaks[i],peaks[i+1]],dtype=int)])
+				peakSum.append(totc)
+			peakSum = np.array(peakSum)
+			return peakSum
+
+		peakSumD = peakSum(counts)
+		peakSumP = peakSum(yped)
+
+		# normalize the peak 0 from yped to peak 0 from data
+		normfac = peakSumD[0]/peakSumP[0]
+		peakSumP = peakSumP*normfac
+		
+		# calculating PEyield
+		peakSub = peakSumD - peakSumP
+		PEyield = np.sum(peakSub[3:]*range(len(peakSub[3:])))/np.sum(peakSub[3:])
+		
+		print("The light yield after discretization is: %10.4f." % (PEyield))
+		ran = np.arange(0,len(peakSumD)/3)
+
+		plt.plot(ran,peakSumD[ran],'yo-')
+		plt.plot(ran,peakSumP[ran],'ro-')
+		plt.plot(ran,peakSub[ran],'go-')
+		plt.ylabel('Count')
+		plt.xlabel('Peak Number')
+		plt.legend([self.basename, "Pedestal", "After Pedestal Subtraction"])
+		plt.yscale("log")
+		plt.show()
 
 def plot_overlay(filenames):
 	from cycler import cycler
@@ -238,27 +324,32 @@ def plot_overlay(filenames):
 		plt.legend(loc='best', framealpha=.5)
 		plt.savefig("figs/comparison.png")
 		print('Saved comparison plot in figs/comparison.png')
+		plt.show()		
 		plt.clf(); plt.cla()
 	#print(y)
 	#print(y[1][30])
 	return
 
-def calculate_avgPE_and_PE(y,PEgain,bins,label,xindex=0,qpercentile=0.99):
-	# Calculate last 1% final counts:
-	totPE=(bins*y)/PEgain
-	cstotPE=np.cumsum(totPE)  # cumulative sum
-	cstotPE_LastQPercentile=np.where(cstotPE>qpercentile*np.sum(totPE)) # a subarray with the indeces of cstotPE where it is bigger than the last 1% percentile (Qperc=0.99) of totPE
-	Qindex=cstotPE_LastQPercentile[0][0]       # The first index that is bigger than Q percentile
-	NonzeroIndeces=totPE.nonzero(); Xmax=np.amax(NonzeroIndeces)
-	print(label+'Top %i percentile found after bin %i of non-zero max of: %i'%((1.-qpercentile)*100,Qindex,Xmax))
-	print(label+'PE counts of the last %i percentile: %i. [ %i/%i=%5.4f ]' % ( (1.-qpercentile)*100, np.sum(totPE[Qindex:]), np.sum(totPE[Qindex:]),np.sum(totPE[0:]),np.sum(totPE[Qindex:])/np.sum(totPE[0:]) ) )
-        #print('Avg Photoelectrons per event from %i bin= %4.2f' % (Qindex,np.sum(PE_fromCut[Qindex:])))
-        print(label+'%i Percentile channel in PE =%4.2f'%((1.-qpercentile)*100,Qindex/PEgain))		
+def calculate_avgPE_after_Cut(peaks,PEgain,counts,bins,_MinPeakNum):
+	# start counting half the distance after _MinPeakNum
+	Cut=peaks[_MinPeakNum]+int((peaks[_MinPeakNum+1]-peaks[_MinPeakNum])/2)
+	print('Using cut at index=%3i counts=%4i bin=%4i'%(Cut,counts[Cut],bins[Cut]))	
+	PE=(bins[:8191]*counts[:8191])/PEgain/(np.sum(counts[Cut:])+1)
+	avgPE=np.sum(PE[Cut:])
+	return avgPE
 
+	
 def main():
 	TP = TileParameters()
 	args=TP.DecodeArguments()
 	inputfilename=args.f[0] # inputfilename="C:/User/test 13 may 8.Spe"
+
+	# Getting the temperature
+	g = open(inputfilename,'r+')
+	g1 = g.readlines()
+	i = g1[1].find("=")
+	Temp = g1[1][i + 1: i + 5]
+
 	# Read txt file, skipping the first 12 rows (header) and the last 15 rows (footer)
 	# Could also make it read only 8192 entries starting after the row: 0 8191
 	data = np.genfromtxt(inputfilename,delimiter=" ",names=['counts'],skip_header=12,skip_footer=15)
@@ -330,23 +421,32 @@ def main():
 	#print("Min#  Idx  ADC")
 	#for i in np.arange(len(valleys)):
 	#	print("%5i %4i %4i" %(i,valleys[i],bins[valleys[i]]))
+	# Calculate average photoelectrons per MIP: We start counting on the valley after the _MinPeakNum.
+	ValleyCut=valleys[TP._MinPeakNum+1] # this gives errors when valleys are not calculated correctly.
+	
+	# remove peak positions that have counts lower than 10
+	i = 0 
+	while i < 20 and counts[peaks[i]] > 10:
+		i += 1
+	if i < 20:
+		peaks = peaks[:i]
+	else:
+		peaks = peaks[:17]
+	peaks = np.append(peaks,np.arange(peaks[-1]+PEgain,TP._MaxZoomADC,PEgain))
+	peaks = peaks.astype(int)
+	print 'Last peak height:', counts[peaks[i-1]]
+
 	print 'Peak positions:', peaks
 	print 'Valley positions:',valleys
-	# Calculate average photoelectrons per MIP: We start counting on the valley after the _MinPeakNum.
-	ValleyCut=valleys[TP._MinPeakNum+1] # this gives errors when valleys are not calculated correctly. 
-	# We can just start counting at half the distance after the _MinPeakNum:
-	Cut=peaks[TP._MinPeakNum]+int((peaks[TP._MinPeakNum+1]-peaks[TP._MinPeakNum])/2)
-	#if np.abs(Cut-ValleyCut)>int(_MinPeakADCDist/2):
-	#	print('Double check the position of the Cut: ')
-	print('Using cut at index=%3i counts=%4i bin=%4i'%(Cut,counts[Cut],bins[Cut]))
+
 	# Calculate photo electron average:
-	PE=(bins*counts)/PEgain/(np.sum(counts[Cut:])+1)
-	TP.avgPE=np.sum(PE[Cut:])
+	Cut=peaks[TP._MinPeakNum]+int((peaks[TP._MinPeakNum+1]-peaks[TP._MinPeakNum])/2)
+	TP.avgPE=calculate_avgPE_after_Cut(peaks,PEgain,counts,bins,TP._MinPeakNum)
 	print('Avg Photoelectrons per event = %4.2f' % TP.avgPE)
 	# Calculate error on the mean:
 	#sigma=
 	TP.plot_cuts(counts[:TP._MaxZoomADC],peaks,valleys,TP.basename,descriptionline,mpd=TP._MinPeakADCDist,xmax=TP._MaxZoomADC,cut=Cut,avgpe=TP.avgPE,pegain=PEgain)
-	
+
 	# Calculate total count from 0:
 	Cut=0
 	totPE=(bins*counts)/PEgain
@@ -358,15 +458,11 @@ def main():
 	print('The location of the first yped peak is: %i' % (np.argmax(yped)))
 	print('The location of the first counts peak is: %i' %  (np.argmax(counts)))
 
-	# Calculate last 1% final counts:
-	calculate_avgPE_and_PE(counts,PEgain,bins, '')
-
         # Subtract pedestal from counts:
-        PedSubCounts=counts-yped
+        PedSubCounts=counts[:8191]-yped[:8191]
         #print PedSubCounts[0:40]
 	TP.plot_full_spectrum(PedSubCounts,TP.basename+'_pedsub_')
-	calculate_avgPE_and_PE(PedSubCounts,PEgain,bins, 'PedSub: ')
-	print('The location of the first pedSub trough is: %i' %  (np.argmin(PedSubCounts)))        
+	
 	## Smoothing really changes the peak location ability
 	#logfile = open('smooth.Spe', 'w')
 	#sy=smooth_spectrum(counts)
@@ -375,11 +471,19 @@ def main():
 	#logfile.close()
 	#plot_full_spectrum(sy[:_MaxZoomADC],'caca')
 
+	# Calculate average PE/event after the 3rd peak:
+	avgPE_cut3=calculate_avgPE_after_Cut(peaks,PEgain,PedSubCounts,bins,3)
+	print('Avg Photoelectrons per event after the fourth peak = %5.3f' % avgPE_cut3)
+	
+	avgPE_after_align = TP.avgPE_after_AlignPedSub(bins, peaks, PEgain, counts, yped, 3)   # tried 3 before. Trying 4 to see if there is any improvement
+	print('Avg Photoelectrons per event after the fourth peak and pedestal subtraction = %5.3f' % avgPE_after_align)
 	# if there is no existed tile parameters in the OptimalTilePara.txt, save the tile parameters just found
+	TP.peakDis(peaks,PEgain,bins,counts,yped)
+
 	if fileExist == 0:
-		TP.saveTileParam()
+		TP.saveTileParam(PEgain,Temp,avgPE_cut3,avgPE_after_align)
 	# if want to recalculate and resave tile parameters, the existed tile parameters will be overwritten
 	elif recalSave == "y":
 		f1.pop(pos)  # gets rid of the existed tile parameters
-		TP.saveTileParam()
+		TP.saveTileParam(PEgain,Temp,avgPE_cut3,avgPE_after_align)
 main()
